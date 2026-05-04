@@ -1,7 +1,11 @@
 from flask import Blueprint, request, jsonify
 from goals.models import Goal
 from core.database import db
-from datetime import datetime
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+from meals.models import Meal
+from water.models import WaterIntake
 
 goals_bp = Blueprint('goals', __name__,url_prefix='/api/goals')
 
@@ -140,4 +144,86 @@ def update_goal(goal_id):
             "end_date": goal.end_date.isoformat(),
             "updated_at": goal.updated_at.isoformat() if goal.updated_at else None
         }
+    }), 200
+
+@goals_bp.route('/streaks', methods=['GET'])
+def get_streaks():
+    # Meta atual (pega a última meta criada  depois podemos melhorar para meta ativa por dia)
+    latest_goal = Goal.query.order_by(Goal.updated_at.desc()).first()
+    
+    if not latest_goal:
+        return jsonify({
+            "message": "Nenhuma meta cadastrada ainda",
+            "calorie_streak": 0,
+            "water_streak": 0,
+            "combined_streak": 0
+        }), 200
+    
+    calorie_goal = latest_goal.calories_goal
+    water_goal_ml = latest_goal.water_goal_ml
+    
+    # Busca todas as refeições e ingestões de água ordenadas por data descendente
+    meals = Meal.query.order_by(Meal.date.desc()).all()
+    waters = WaterIntake.query.order_by(WaterIntake.date.desc()).all()
+    
+    # Agrupa calorias e água por data
+    calories_by_day = defaultdict(float)
+    water_by_day = defaultdict(float)
+    
+    for meal in meals:
+        if meal.date:
+            calories_by_day[meal.date] += meal.calories
+    
+    for water in waters:
+        if water.date:
+            water_by_day[water.date] += water.amount_ml
+    
+    # Dias únicos (do mais recente pro mais antigo)
+    all_dates = sorted(set(list(calories_by_day.keys()) + list(water_by_day.keys())), reverse=True)
+    
+    calorie_streak = 0
+    water_streak = 0
+    combined_streak = 0
+    current_date = datetime.utcnow().date()
+    
+    for day in all_dates:
+        # Só dias até hoje
+        if day > current_date:
+            continue
+        
+        # Verifica se é consecutivo ao streak atual
+        if calorie_streak > 0 and day != current_date - timedelta(days=calorie_streak):
+            break  # streak interrompido
+        
+        calorie_today = calories_by_day.get(day, 0)
+        water_today = water_by_day.get(day, 0)
+        
+        # Atingiu meta de calorias?
+        if calorie_today >= calorie_goal:
+            calorie_streak += 1
+        else:
+            calorie_streak = 0
+        
+        # Atingiu meta de água?
+        if water_today >= water_goal_ml:
+            water_streak += 1
+        else:
+            water_streak = 0
+        
+        # Atingiu AMBAS?
+        if calorie_today >= calorie_goal and water_today >= water_goal_ml:
+            combined_streak += 1
+        else:
+            combined_streak = 0
+        
+        current_date = day  # atualiza para o próximo check
+    
+    return jsonify({
+        "message": "Streaks calculados com sucesso",
+        "calorie_goal": calorie_goal,
+        "water_goal_ml": water_goal_ml,
+        "calorie_streak_days": calorie_streak,
+        "water_streak_days": water_streak,
+        "combined_streak_days": combined_streak,
+        "last_updated": datetime.utcnow().isoformat()
     }), 200
