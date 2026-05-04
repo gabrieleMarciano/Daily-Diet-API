@@ -176,4 +176,4 @@ docker-compose exec web flask db upgrade
 # ✨ Autor
 
 Feito por **Gabriele**
-Projeto final do curso de Python/Flask
+Projeto do curso de Python/Flask
